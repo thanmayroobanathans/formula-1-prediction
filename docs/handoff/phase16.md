@@ -19,15 +19,28 @@ Keep a candidate only if gate_v2 passes (win AND podium CI on 2025 below 0, defl
 p < 0.05 once >= 10 trials, CPCV median path better). Otherwise write it up in `lab/`
 with the numbers and the reason, and leave the champion alone.
 
+## Result (real data, train run 45701720452, embargo 10)
+- **M1 stagewise PASSES gate_v2 against the champion B1 logistic** before the weekend
+  and after practice (win and podium CIs below 0, deflated p <= 0.003, CPCV 7/7).
+  First candidate in the project to pass. Recommended for `final_config.json`
+  (frozen, so this is a recommendation): pre and practice -> "M1 stagewise".
+- B1 stagewise: better than B1 on podium and CPCV, win CI on 2025 just touches 0. Fail.
+- After qualifying, B0 stays: stagewise beats it on every CPCV path but not on 2025.
+  `lab/phase16_stagewise_quali.md`.
+- M4 fails everywhere: predictions too flat. `lab/phase16_m4_bayesian.md` lists four
+  checks to run before any re-gate.
+- `reports/phase16_decision.md` has the full gate output.
+- Gap found: `validate` gates against B0 only. It should also gate against the champion
+  per moment from `final_config.json` (done by hand here with `pitwall-f1 gate`).
+
 ## Known costs and limits
 - M4 fit: ~1-3 min per retrain on the full 2018-2025 data (ADVI 15,000 iterations).
   "M4 stagewise" refits M4 four times per retrain, so it is not in the CI matrix; run it
   only if M4 itself passes.
 - ADVI is mean-field: intervals are somewhat too narrow. NUTS (`method="nuts"`) is the
   check, at ~10x the time.
-- Synthetic smoke test: M4 was between B0 and B1/M1 on win log-loss; stagewise B1 was
-  slightly worse than B1 (the synthetic data has no front-of-grid effect). Real data
-  decides.
+- Real run times: B1 stagewise ~4 min, M1 stagewise ~50 min, M4 ~28 min (CPCV, one
+  moment). The whole run took about 70 minutes of wall time.
 
 ## For Phase 17 (HMM)
 `race_scores()` is the interface: an HMM regime model only has to return `RaceScores`
