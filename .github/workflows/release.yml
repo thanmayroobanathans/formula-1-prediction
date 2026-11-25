@@ -1,0 +1,192 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Publish target"
+        type: choice
+        options:
+          - testpypi
+          - pypi
+          - build-only
+        default: testpypi
+      create_github_release:
+        description: "Create a GitHub Release (always true for v* tag pushes)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install CPU-only PyTorch and dev dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+      - name: Lint with ruff
+        run: ruff check .
+      - name: Run test suite
+        run: pytest --cov=pitwall --cov-report=term-missing
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      has_notes: ${{ steps.meta.outputs.has_notes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Validate version and extract release metadata
+        id: meta
+        run: |
+          TAG_ARG=""
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_ARG="--tag ${{ github.ref_name }}"
+          fi
+          python .github/scripts/release_meta.py $TAG_ARG --notes-out release-notes.md
+      - name: Install build and twine
+        run: pip install --upgrade build twine
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Check distributions with twine
+        run: twine check dist/*
+      - name: Smoke-test wheel in a clean virtual environment
+        run: |
+          python -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install --upgrade pip
+          /tmp/smoke-venv/bin/pip install dist/*.whl
+          /tmp/smoke-venv/bin/pitwall-f1 --version
+          /tmp/smoke-venv/bin/pitwall-f1 --help > /dev/null
+          /tmp/smoke-venv/bin/python -c "import pitwall; assert pitwall.__version__ == '${{ steps.meta.outputs.version }}'"
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+          retention-days: 7
+      - name: Upload extracted changelog notes
+        if: steps.meta.outputs.has_notes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 7
+
+  publish-testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/pitwall-f1
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+      - name: Publish to TestPyPI (Trusted Publishing)
+        id: publish
+        continue-on-error: true
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+      - name: Report if TestPyPI publishing is not configured
+        if: steps.publish.outcome != 'success'
+        run: |
+          echo "::warning::TestPyPI publish did not succeed (Trusted Publishing may not be configured yet)."
+          echo "### TestPyPI Publish Skipped/Failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Trusted Publishing for the \`testpypi\` environment may not be configured yet. See \`docs/RELEASING.md\`." >> "$GITHUB_STEP_SUMMARY"
+
+  publish-pypi:
+    needs: build
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.publish.outcome == 'success' }}
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pitwall-f1
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+      - name: Publish to PyPI (Trusted Publishing)
+        id: publish
+        continue-on-error: true
+        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Warn and fall back to GitHub Release if PyPI is not configured
+        if: steps.publish.outcome != 'success'
+        run: |
+          echo "::warning::PyPI publish did not succeed (Trusted Publishing may not be configured yet). Falling back to attaching packages to the GitHub Release."
+          echo "### PyPI Publish Fallback" >> "$GITHUB_STEP_SUMMARY"
+          echo "PyPI Trusted Publishing is not configured or failed; built \`.whl\` and \`.tar.gz\` packages will still be attached to the GitHub Release." >> "$GITHUB_STEP_SUMMARY"
+
+  github-release:
+    needs: [build, publish-pypi]
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+        (github.event_name == 'workflow_dispatch' && inputs.create_github_release == true)
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+      - name: Download extracted changelog notes
+        if: needs.build.outputs.has_notes == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: .
+      - name: Create GitHub Release with package artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.build.outputs.version) }}
+          files: dist/*
+          prerelease: ${{ needs.build.outputs.prerelease == 'true' }}
+          body_path: ${{ needs.build.outputs.has_notes == 'true' && 'release-notes.md' || '' }}
+          generate_release_notes: ${{ needs.build.outputs.has_notes != 'true' }}
+      - name: Summarize release outcome
+        run: |
+          if [ "${{ needs.publish-pypi.outputs.published }}" = "true" ]; then
+            echo "Published \`pitwall-f1==${{ needs.build.outputs.version }}\` to PyPI and attached distributions to the GitHub Release." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Attached \`pitwall-f1==${{ needs.build.outputs.version }}\` (\`.whl\` and \`.tar.gz\`) to the GitHub Release (PyPI publish was skipped or not configured)." >> "$GITHUB_STEP_SUMMARY"
+          fi
