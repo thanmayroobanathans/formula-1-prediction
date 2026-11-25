@@ -531,8 +531,9 @@ def _strengths(args: argparse.Namespace) -> tuple[str, int]:
         matplotlib.use("Agg")
         from .plotting.bayes_plots import strength_intervals
         ax = strength_intervals(table, "car")
-        ax.figure.tight_layout()
-        ax.figure.savefig(args.plot, dpi=110)
+        fig: Any = ax.figure
+        fig.tight_layout()
+        fig.savefig(args.plot, dpi=110)
         lines.append(f"Saved {args.plot}")
     return "\n".join(lines), EXIT_OK
 

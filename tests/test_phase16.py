@@ -220,10 +220,9 @@ def test_strengths_table_and_plot(fitted):
 
 def _idata(az, posterior):
     stats_ = {"diverging": np.zeros((2, 200), bool)}
-    try:                                    # ArviZ >= 1.0
+    if int(az.__version__.split(".")[0]) >= 1:      # ArviZ 1.x (Python >= 3.12)
         return az.from_dict({"posterior": posterior, "sample_stats": stats_})
-    except TypeError:                       # ArviZ 0.x
-        return az.from_dict(posterior=posterior, sample_stats=stats_)
+    return az.from_dict(posterior=posterior, sample_stats=stats_)   # ArviZ 0.x
 
 
 def test_advi_and_nuts_checks():

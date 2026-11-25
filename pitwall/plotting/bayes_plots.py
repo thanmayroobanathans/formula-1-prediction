@@ -1,13 +1,11 @@
 """Phase 16 plots: posterior car and driver strengths with their uncertainty."""
 from __future__ import annotations
 
-from typing import cast
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 
 from .colours import team_colour
 
@@ -23,7 +21,7 @@ def strength_intervals(strengths: pd.DataFrame, kind: str = "car", top: int | No
     if top is not None:
         rows = rows.tail(top)
     if ax is None:
-        fig = cast(Figure, plt.figure(figsize=(7, 0.3 * len(rows) + 1.2)))
+        fig = plt.figure(figsize=(7, 0.3 * len(rows) + 1.2))
         ax = fig.add_subplot()
     y = np.arange(len(rows))
     colours = [team_colour(i) if kind == "car" else "#4c72b0" for i in rows["Id"]]
