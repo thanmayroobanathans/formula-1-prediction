@@ -22,8 +22,10 @@ from .errors import DataNotAvailableError, PitwallError
 EXIT_OK, EXIT_ERROR, EXIT_UNAVAILABLE = 0, 1, 3
 MOMENT_CHOICES = ["pre", "practice", "quali"]
 MODEL_CHOICES = ["B0 grid slot", "B1 logistic", "B2 LightGBM", "M1 strength",
-                 "M1-pure strength", "M2-full", "M3 simulator"]
+                 "M1-pure strength", "M2-full", "M3 simulator",
+                 "B1 stagewise", "M1 stagewise", "M4 Bayesian", "M4 stagewise"]
 FAST_MODELS = ["B0 grid slot", "B1 logistic", "M1 strength"]
+DEFAULT_EMBARGO = 10  # = predict.validation.DEFAULT_EMBARGO (not imported: keeps --help fast)
 
 
 def make_sources(openf1: bool = True, weather: bool = True) -> Any:
@@ -150,10 +152,11 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--blocks", type=int, default=8, help="CPCV blocks N (default 8)")
     validate.add_argument("--test-blocks", type=int, default=2,
                           help="CPCV test blocks k (default 2: C(8,2) = 28 splits)")
-    validate.add_argument("--embargo", type=int, default=1,
-                          help="race weekends removed after each test block (default 1)")
-    validate.add_argument("--sensitivity", nargs="*", type=int, default=[0, 3, 10],
-                          help="extra embargoes to compare (default 0 3 10; none: skip)")
+    validate.add_argument("--embargo", type=int, default=DEFAULT_EMBARGO,
+                          help=f"race weekends removed after each test block "
+                               f"(default {DEFAULT_EMBARGO})")
+    validate.add_argument("--sensitivity", nargs="*", type=int, default=[0, 1, 3],
+                          help="extra embargoes to compare (default 0 1 3; none: skip)")
     validate.add_argument("--include-m2", action="store_true",
                           help="also M2 (slow: 1-2 seeds, see --m2-seeds)")
     validate.add_argument("--m2-seeds", type=int, choices=[1, 2], default=1)
@@ -177,9 +180,20 @@ def build_parser() -> argparse.ArgumentParser:
     gate_cmd.add_argument("candidate", help="model name as logged, e.g. 'POOL-log B0+B1'")
     gate_cmd.add_argument("incumbent", help="e.g. 'B0 grid slot'")
     gate_cmd.add_argument("--moment", choices=MOMENT_CHOICES, required=True)
-    gate_cmd.add_argument("--embargo", type=int, default=1, help="which CPCV run to use")
+    gate_cmd.add_argument("--embargo", type=int, default=DEFAULT_EMBARGO,
+                          help="which CPCV run to use")
     gate_cmd.add_argument("--season", type=int, default=2025)
     gate_cmd.add_argument("--log", type=Path, default=Path("reports/experiments.csv"))
+
+    strengths = sub.add_parser("strengths", help="Bayesian (M4) car and driver strengths "
+                                                 "with intervals (needs the bayes extra)")
+    strengths.add_argument("year", type=int)
+    strengths.add_argument("--after-round", type=int, default=None,
+                           help="use races up to this round (default: all of that year)")
+    strengths.add_argument("--dataset", type=Path)
+    strengths.add_argument("--iterations", type=int, default=15_000,
+                           help="ADVI iterations (default 15000)")
+    strengths.add_argument("--plot", type=Path, help="also save a PNG of the car pace")
 
     report = sub.add_parser("report", help="LaTeX/PDF race preview (needs LuaLaTeX)")
     report.add_argument("year", help="season, or 'next'")
@@ -247,7 +261,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[str, int]:
     handlers = {"next": _next, "predict": _predict, "backtest": _backtest,
                 "dataset": _dataset, "score": _score, "final-2026": _final,
                 "report": _report, "market": _market, "paper": _paper,
-                "validate": _validate, "gate": _gate}
+                "validate": _validate, "gate": _gate, "strengths": _strengths}
     if args.command in handlers:
         return handlers[args.command](args)
     return _run(args), EXIT_OK
@@ -489,6 +503,39 @@ def _final(args: argparse.Namespace) -> tuple[str, int]:
                              history, confirmed=True, force=args.force)
     label = " (RE-RUN)" if outcome.rerun else ""
     return f"Wrote {outcome.report} and {outcome.lock}{label}.", EXIT_OK
+
+
+# ---------- Phase 16 ----------
+def _strengths(args: argparse.Namespace) -> tuple[str, int]:
+    from .predict.models import BayesianModel
+
+    data = _load_data(args.dataset)
+    if args.year >= 2026 and not (data["Year"] == args.year).any():
+        raise DataNotAvailableError(f"No {args.year} races in the dataset.")
+    rows = data[(data["Moment"] == "pre") & (data["Year"] <= args.year)]
+    if args.after_round is not None:
+        rows = rows[(rows["Year"] < args.year) | (rows["Round"] <= args.after_round)]
+    rows = rows[rows["Finish"].notna() | rows["DNF"].notna()]
+    if rows.empty:
+        raise DataNotAvailableError("No finished races to learn from.")
+    model = BayesianModel(n_iter=args.iterations).fit(rows)
+    table = model.strengths()
+    lines = []
+    for kind, title in (("car", "Car pace"), ("driver", "Driver skill")):
+        part = table[table["Kind"] == kind]
+        lines += [f"{title} (% gap to the typical car, lower = faster; 80% interval):",
+                  part[["Id", "Mean", "Low", "High", "Rookie"]].round(3).to_string(index=False),
+                  ""]
+    if args.plot:
+        import matplotlib
+        matplotlib.use("Agg")
+        from .plotting.bayes_plots import strength_intervals
+        ax = strength_intervals(table, "car")
+        fig: Any = ax.figure
+        fig.tight_layout()
+        fig.savefig(args.plot, dpi=110)
+        lines.append(f"Saved {args.plot}")
+    return "\n".join(lines), EXIT_OK
 
 
 # ---------- Phase 14 ----------

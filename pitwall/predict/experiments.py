@@ -25,7 +25,7 @@ from typing import Any
 
 import pandas as pd
 
-PHASE = "15"
+PHASE = "16"
 OLD_PHASE = "<=14"
 V2_COLUMNS = ["experiment_id", "family", "params_hash", "phase", "validation", "embargo",
               "cpcv_blocks", "cpcv_test_blocks", "data_hash"]
@@ -34,8 +34,17 @@ FITTED_KEYS = frozenset({"strength", "sim", "wet"})  # learned from data, not ch
 LOSS_COLUMNS = ["Split", "Block", "RaceId", "Date", "Year", "n_rows",
                 "win", "podium", "points", "dnf", "winner"]
 LOSS_DECIMALS = 6
-FAMILY_PREFIXES = [("POOL", "pool"), ("ENS", "ensemble"), ("B0", "B0"), ("B1", "B1"),
+# Phase 16: stagewise Plackett-Luce is its own family (its own trials in the deflated
+# score, PBO and BH), whichever base model it wraps. Checked before the plain prefixes.
+FAMILY_PREFIXES = [("B1 stagewise", "stagewise PL"), ("M1 stagewise", "stagewise PL"),
+                   ("M4 stagewise", "stagewise PL"), ("M4", "M4"),
+                   ("POOL", "pool"), ("ENS", "ensemble"), ("B0", "B0"), ("B1", "B1"),
                    ("B2", "B2"), ("M1", "M1"), ("M2", "M2"), ("M3", "M3")]
+
+
+def is_validated_phase(phase: pd.Series) -> pd.Series:
+    """True for runs logged by the Phase 15+ validation (phase '15', '16', ...)."""
+    return pd.to_numeric(phase, errors="coerce").fillna(0) >= 15
 
 
 # ---------- names and hashes ----------

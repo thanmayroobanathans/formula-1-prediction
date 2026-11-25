@@ -4,6 +4,9 @@
 # Phase 15: the validation (walk-forward + CPCV + embargo sensitivity + gates, fast
 # models only) runs as a matrix over the three moments right after the dataset job;
 # a last job merges their logs, writes reports/validation.md and commits reports/.
+# Phase 16: a second matrix (validate-p16) runs the new candidates (stagewise PL on B1
+# and M1, the M4 Bayesian model) one job per model and moment; the same report job
+# merges every validate-* log and gates them against the champion with gate_v2.
 # Data and models are never committed (artifacts expire; the cache is not in git).
 name: train
 
@@ -18,6 +21,10 @@ on:
         default: false
       validate:
         description: "Run the Phase 15 validation (CPCV, fast models)"
+        type: boolean
+        default: true
+      phase16:
+        description: "Validate the Phase 16 candidates (stagewise PL, M4 Bayesian)"
         type: boolean
         default: true
 
@@ -170,10 +177,53 @@ jobs:
           path: artifacts/validate-${{ matrix.moment }}
           retention-days: 7
 
+  validate-p16:
+    # Phase 16 candidates, one job per (model, moment): 9 jobs in parallel. Default
+    # embargo only (the Phase 15 job already ran the sensitivity), no pools. M4 is the
+    # slow one (an ADVI fit per retrain, ~1-3 min each): budget about 2-3 h per job.
+    needs: dataset
+    if: ${{ github.event_name == 'schedule' || inputs.phase16 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        moment: [pre, practice, quali]
+        model: [b1-stagewise, m1-stagewise, m4-bayesian]
+        include:
+          - {model: b1-stagewise, name: "B1 stagewise"}
+          - {model: m1-stagewise, name: "M1 stagewise"}
+          - {model: m4-bayesian, name: "M4 Bayesian"}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[ml,bayes]"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dataset
+          path: artifacts
+      - name: Walk-forward + CPCV, one candidate at one moment
+        run: |
+          pitwall-f1 -v validate --models "${{ matrix.name }}" --moments ${{ matrix.moment }} \
+            --sensitivity --no-pools --dataset artifacts/dataset.parquet \
+            --log artifacts/validate-p16-${{ matrix.model }}-${{ matrix.moment }}/experiments.csv \
+            --no-report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validate-p16-${{ matrix.model }}-${{ matrix.moment }}
+          path: artifacts/validate-p16-${{ matrix.model }}-${{ matrix.moment }}
+          if-no-files-found: ignore
+          retention-days: 7
+
   validate-report:
     # After the backtest commit (assemble), so the two never push the log at once.
-    needs: [validate, assemble]
-    if: ${{ always() && needs.validate.result == 'success' }}
+    # Runs if either validation matrix produced logs (a failed M4 job does not block it).
+    needs: [validate, validate-p16, assemble]
+    if: ${{ always() && (needs.validate.result == 'success' || needs.validate-p16.result != 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

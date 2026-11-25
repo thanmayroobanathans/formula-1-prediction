@@ -28,7 +28,8 @@ from .backtest import (
 )
 from .ensemble import L2_TO_EQUAL, PooledModel, pool_forward, pool_name, pool_params
 from .experiments import (
-    append_rows, count_trials, losses_dir_for, model_family, read_log, read_race_losses,
+    append_rows, count_trials, is_validated_phase, losses_dir_for, model_family, read_log,
+    read_race_losses,
     trials_table, write_race_losses,
 )
 from .metrics import METRIC_NAMES, weighted_loss
@@ -373,9 +374,9 @@ def write_validation_report(log_path: Path | str = EXPERIMENTS_PATH,
     """reports/validation.md from the experiment log only (no training). `note` is
     printed under the title (e.g. which data sources the run had)."""
     log = read_log(log_path)
-    current = log[log["phase"] == "15"]
+    current = log[is_validated_phase(log["phase"])]
     if current.empty:
-        raise DataNotAvailableError(f"No Phase 15 experiments in {log_path}: run validate.")
+        raise DataNotAvailableError(f"No Phase 15+ experiments in {log_path}: run validate.")
     target = Path(report_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     lines = _header(current, embargo)
@@ -412,7 +413,7 @@ def _header(current: pd.DataFrame, embargo: int) -> list[str]:
 
 
 def _evidence_rows(log: pd.DataFrame, moment: str, embargo: int) -> tuple[list[str], str]:
-    rows = log[(log["moment"] == moment) & (log["phase"] == "15")]
+    rows = log[(log["moment"] == moment) & is_validated_phase(log["phase"])]
     cpcv = rows[(rows["validation"] == "cpcv") & (rows["embargo"] == str(embargo))]
     data_id = cpcv["data_hash"].iloc[-1] if not cpcv.empty else (
         rows["data_hash"].iloc[-1] if not rows.empty else "")
@@ -618,7 +619,7 @@ def multiple_testing_section(log: pd.DataFrame, log_path: Path | str,
 def pbo_by_family(log: pd.DataFrame, log_path: Path | str) -> list[list[str]]:
     """PBO over all walk-forward configurations of each family (common races only)."""
     out = []
-    wf = log[(log["validation"] == "walk_forward") & (log["phase"] == "15")]
+    wf = log[(log["validation"] == "walk_forward") & is_validated_phase(log["phase"])]
     for (family, moment), group in wf.groupby(["family", "moment"]):
         latest = group.groupby("params_hash").tail(1)
         if len(latest) < 2:

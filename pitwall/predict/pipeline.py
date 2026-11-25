@@ -22,7 +22,8 @@ from .backtest import REPORTS_DIR, check_lock, check_no_future, git_hash, strip_
 from .calibration import apply_platt, fit_platt, fit_temperature, temper
 from .ensemble import L2_TO_EQUAL, MIN_TRAIN_RACES, build_stacks, fit_weights, pool
 from .models import (
-    GridSlotBaseline, LightGBMRanker, LogisticModel, NeuralRanker, RaceSimulator, StrengthModel,
+    BayesianModel, GridSlotBaseline, LightGBMRanker, LogisticModel, NeuralRanker,
+    RaceSimulator, StagewiseModel, StrengthModel,
 )
 from .models.base import check_consistency, position_matrix, prediction_frame
 
@@ -87,7 +88,13 @@ def model_factories(n_seeds: int) -> dict[str, Callable[[], Any]]:
     return {"B0 grid slot": GridSlotBaseline, "B1 logistic": LogisticModel,
             "B2 LightGBM": LightGBMRanker, "M1 strength": StrengthModel,
             "M1-pure strength": lambda: StrengthModel(pure=True),
-            "M2-full": lambda: NeuralRanker(n_seeds=n_seeds), "M3 simulator": RaceSimulator}
+            "M2-full": lambda: NeuralRanker(n_seeds=n_seeds), "M3 simulator": RaceSimulator,
+            # Phase 16: one Plackett-Luce temperature per stage of the order
+            "B1 stagewise": lambda: StagewiseModel(LogisticModel, "B1 stagewise"),
+            "M1 stagewise": lambda: StagewiseModel(StrengthModel, "M1 stagewise"),
+            # Phase 16: the hierarchical Bayesian car/driver model (needs the bayes extra)
+            "M4 Bayesian": BayesianModel,
+            "M4 stagewise": lambda: StagewiseModel(BayesianModel, "M4 stagewise")}
 
 
 class FinalPipeline:

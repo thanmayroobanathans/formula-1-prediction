@@ -36,8 +36,11 @@ from .metrics import race_loss_table, summarise, weighted_loss
 from .models.base import RaceModel, check_consistency
 
 CPCV_FIRST_YEAR, CPCV_LAST_YEAR = 2018, 2025
-DEFAULT_BLOCKS, DEFAULT_TEST_BLOCKS, DEFAULT_EMBARGO = 8, 2, 1
-SENSITIVITY_EMBARGOES = (0, 3, 10)
+DEFAULT_BLOCKS, DEFAULT_TEST_BLOCKS = 8, 2
+# Phase 16: 10 races, the longest look-back of any form feature (DNF rates over 10
+# races), so no training race carries a test race's result inside its features.
+DEFAULT_EMBARGO = 10
+SENSITIVITY_EMBARGOES = (0, 1, 3)
 Progress = Callable[[str], None]
 
 

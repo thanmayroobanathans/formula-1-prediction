@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pitwall-f1"
-version = "2.2.0.dev15"
+version = "2.3.0.dev16"
 description = "A small, readable F1 data analysis and race-prediction library inspired by FastF1 (a learning project)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,6 +43,9 @@ report = ["jinja2>=3.1"]
 # M2 neural network. On Linux install the CPU-only wheel FIRST (much smaller):
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
 nn = ["torch>=2.2"]
+# M4 hierarchical Bayesian car/driver model (Phase 16). CPU only, no C compiler needed
+# for ADVI; NUTS is faster with one (g++).
+bayes = ["pymc>=5.10", "arviz>=0.17"]
 
 [project.scripts]
 pitwall-f1 = "pitwall.cli:main"

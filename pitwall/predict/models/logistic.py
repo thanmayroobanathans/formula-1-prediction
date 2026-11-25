@@ -21,6 +21,7 @@ from scipy import optimize
 
 from .._optional import require
 from .base import (
+    RaceScores,
     standardise,
     N_SIMS, design_matrix, features_of, finish_tensor, fit_binary, moment_of,
     pl_loglik_and_grad, predict_from_scores,
@@ -81,13 +82,17 @@ class LogisticModel:
         self.dnf_ = fit_binary(dnf_model, z, train["DNF"].to_numpy())
         return self
 
-    def predict(self, race: pd.DataFrame) -> pd.DataFrame:
-        """Probabilities for one race of the moment the model was fitted on."""
+    def race_scores(self, race: pd.DataFrame) -> RaceScores:
+        """Raw scores (higher = faster), their uncertainty, DNF chances and temperature."""
         if moment_of(race) != self.moment_:
             raise ValueError(f"{self.name} was fitted on '{self.moment_}' rows.")
         z = standardise(self.scaler_, design_matrix(race, self.features_))
-        p_dnf = self.dnf_.predict_proba(z)[:, 1]
-        return predict_from_scores(race, z @ self.weights_, p_dnf, 1.0, self.n_sims, self.seed)
+        return RaceScores(z @ self.weights_, None, self.dnf_.predict_proba(z)[:, 1], 1.0)
+
+    def predict(self, race: pd.DataFrame) -> pd.DataFrame:
+        """Probabilities for one race of the moment the model was fitted on."""
+        s = self.race_scores(race)
+        return predict_from_scores(race, s.scores, s.p_dnf, s.scale, self.n_sims, self.seed)
 
     def coefficients(self) -> pd.Series:
         """Ranking weight per standardised feature (+ = helps finish ahead), biggest first."""

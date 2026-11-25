@@ -9,7 +9,7 @@ where each driver lands, and you get a drivers x positions probability matrix.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 import numpy as np
 import pandas as pd
@@ -100,6 +100,127 @@ def simulate_positions(scores: np.ndarray, p_dnf: np.ndarray, n_sims: int,
     cells = np.arange(n)[None, :] * n + place
     counts = np.bincount(cells.ravel(), minlength=n * n).reshape(n, n)
     return (counts + SMOOTHING) / (n_sims + SMOOTHING * n)
+
+
+# ---------- stagewise Plackett-Luce (Phase 16) ----------
+DEFAULT_STAGES = (1, 3, 10)        # stage ends: 1st | 2nd-3rd | 4th-10th | 11th onwards
+MULTIPLIER_BOUNDS = (0.05, 20.0)   # allowed stage multipliers of the model's temperature
+
+
+class RaceScores(NamedTuple):
+    """What a score model says about one race, before turning it into probabilities."""
+
+    scores: np.ndarray            # higher = faster (raw: the temperature is separate)
+    spread: np.ndarray | None     # uncertainty of each score (raw units), or None
+    p_dnf: np.ndarray
+    scale: float                  # the model's own (single) temperature
+
+
+def stage_index(n_places: int, stages: tuple[int, ...] = DEFAULT_STAGES) -> np.ndarray:
+    """stage_index[k] = which stage place k+1 belongs to (0 = the first stage)."""
+    places = np.arange(1, n_places + 1)
+    return np.searchsorted(np.asarray(stages), places, side="left")
+
+
+def simulate_positions_staged(scores: np.ndarray, p_dnf: np.ndarray, n_sims: int,
+                              rng: np.random.Generator, multipliers: np.ndarray,
+                              stages: tuple[int, ...] = DEFAULT_STAGES,
+                              score_sd: np.ndarray | None = None) -> np.ndarray:
+    """Stagewise Plackett-Luce Monte Carlo (Phase 16).
+
+    Ordinary Plackett-Luce uses one temperature for every place. Here each STAGE of
+    the order (by default 1st | 2nd-3rd | 4th-10th | 11th+) has its own: the places of
+    stage s are filled, best first, from softmax(multiplier_s * score) over the drivers
+    not placed yet (Gumbel trick: the top-m keys of multiplier * score + Gumbel noise
+    are a Plackett-Luce draw of m places). Retired drivers go to the back.
+    """
+    n = len(scores)
+    strength = np.asarray(scores, float)[None, :]
+    if score_sd is not None:
+        strength = strength + np.asarray(score_sd, float)[None, :] * rng.standard_normal(
+            (n_sims, n))
+    retired = rng.random((n_sims, n)) < np.asarray(p_dnf, float)[None, :]
+    placed = np.zeros((n_sims, n), dtype=bool)
+    order = np.empty((n_sims, n), dtype=np.int64)
+    rows = np.arange(n_sims)[:, None]
+    ends = [min(e, n) for e in stages if e < n] + [n]
+    start = 0
+    for s, end in enumerate(ends):
+        if end <= start:
+            continue
+        m = float(multipliers[min(s, len(multipliers) - 1)])
+        keys = m * strength + rng.gumbel(size=(n_sims, n))
+        keys = np.where(retired, keys - 1e9, keys)   # retired: only once finishers run out
+        keys = np.where(placed, -np.inf, keys)
+        take = np.argsort(-keys, axis=1)[:, : end - start]
+        order[:, start:end] = take
+        placed[rows, take] = True
+        start = end
+    place = np.empty_like(order)
+    np.put_along_axis(place, order, np.arange(n)[None, :], axis=1)
+    cells = np.arange(n)[None, :] * n + place
+    counts = np.bincount(cells.ravel(), minlength=n * n).reshape(n, n)
+    return (counts + SMOOTHING) / (n_sims + SMOOTHING * n)
+
+
+def staged_pl_loglik(u: np.ndarray, mask: np.ndarray, multipliers: np.ndarray,
+                     stages: tuple[int, ...] = DEFAULT_STAGES) -> float:
+    """Plackett-Luce log-likelihood with one temperature multiplier per stage.
+
+    u[r, k] = score of the driver who finished k-th in race r (finishers only). Place k
+    in stage s adds  m_s * u_k - log(sum_{j >= k} exp(m_s * u_j)).
+    """
+    if mask.size == 0:
+        return 0.0
+    stage = stage_index(u.shape[1], stages)
+    total = 0.0
+    for s in np.unique(stage):
+        m = float(multipliers[min(int(s), len(multipliers) - 1)])
+        v = np.where(mask, m * u, -np.inf)
+        top = np.max(np.where(mask, v, -np.inf), axis=1, keepdims=True)
+        top = np.where(np.isfinite(top), top, 0.0)
+        e = np.where(mask, np.exp(v - top), 0.0)
+        denom = np.flip(np.cumsum(np.flip(e, axis=1), axis=1), axis=1)
+        here = mask & (stage[None, :] == s)
+        safe = np.where(here, denom, 1.0)
+        total += float(np.sum(np.where(here, v - top - np.log(safe), 0.0)))
+    return total
+
+
+def fit_stage_multipliers(scores: np.ndarray, races: np.ndarray, finish: np.ndarray,
+                          stages: tuple[int, ...] = DEFAULT_STAGES,
+                          monotone: bool = False) -> np.ndarray:
+    """Stage multipliers maximising the stagewise PL likelihood of the observed orders.
+
+    scores must be OUT-OF-SAMPLE (scores of races the model was not trained on) and
+    already multiplied by the model's own temperature: then multiplier 1 everywhere
+    means "the model's single temperature was right". monotone=True forces
+    m_1 >= m_2 >= ... (the front is never less predictable than the back).
+    """
+    tensor, mask = finish_tensor(scores, races, finish)
+    n_stages = len(stages) + 1
+    if not mask.any():
+        return np.ones(n_stages)
+    u = tensor[..., 0]
+    low, high = np.log(MULTIPLIER_BOUNDS[0]), np.log(MULTIPLIER_BOUNDS[1])
+
+    def to_multipliers(x: np.ndarray) -> np.ndarray:
+        if not monotone:
+            return np.exp(x)
+        # x[0] = log of the last stage; the others are log-increments >= 0 (softplus)
+        steps = np.concatenate([[x[0]], np.logaddexp(0.0, x[1:])])
+        return np.exp(np.cumsum(steps))[::-1]
+
+    def loss(x: np.ndarray) -> float:
+        return -staged_pl_loglik(u, mask, to_multipliers(x), stages)
+
+    start = np.zeros(n_stages) if not monotone else np.full(n_stages, -3.0)
+    if monotone:
+        start[0] = 0.0
+    bounds = [(low, high)] * n_stages if not monotone else [(low, high)] + [(-10, 5)] * (
+        n_stages - 1)
+    result = optimize.minimize(loss, start, method="L-BFGS-B", bounds=bounds)
+    return np.clip(to_multipliers(result.x), *MULTIPLIER_BOUNDS)
 
 
 def prediction_frame(race: pd.DataFrame, positions: np.ndarray,

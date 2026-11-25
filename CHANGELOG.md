@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.3.0.dev16 — Phase 16: stagewise Plackett-Luce and the M4 Bayesian model
+Goal: the first algorithm upgrade judged by the Phase 15 gate.
+- Step 0a, embargo: the default CPCV embargo is now **10** race weekends (was 1); 0, 1 and
+  3 run as sensitivity. Phase 15 showed B2's CPCV score still moving at e = 3, so 1 was
+  not enough. `validation.DEFAULT_EMBARGO`, `validate --embargo`, `gate --embargo`.
+- Step 0b, stagewise Plackett-Luce (`models/base.py`, `models/stagewise.py`): separate
+  multipliers for places 1 | 2-3 | 4-10 | 11+, fitted out-of-fold (3 folds), Gumbel-trick
+  sampler per stage, optional monotone constraint. New models "B1 stagewise",
+  "M1 stagewise", "M4 stagewise". Its own family in the trial counts.
+- `race_scores()` on B1, M1 and M4: scores, per-driver spread, DNF probabilities and the
+  scale, so wrappers reuse a model's scores without re-deriving them.
+- M4 hierarchical Bayesian car/driver model (`models/bayes.py`, PyMC, extra `bayes`):
+  car random walk over 3-race blocks with winter and rule-reset jumps, driver skill
+  random walk by season, learned rookie prior, Gaussian quali/practice likelihoods,
+  Plackett-Luce finishing likelihood; ADVI (Adam) with a convergence check and one
+  continuation, or NUTS with R-hat/divergence checks (`BayesFitError` otherwise);
+  per-driver uncertainty feeds the sampler's spread.
+- `pitwall-f1 strengths YEAR [--after-round N] [--plot PNG]`: car and driver strengths
+  with 80% intervals; `plotting.strength_intervals`.
+- Experiment log: new runs are `phase` "16"; reports read every phase >= 15.
+- CI: tests install `.[dev,bayes]`; train.yml `validate-p16` matrix (3 candidates x 3
+  moments, default embargo, no pools) feeding the same validation report and gate_v2.
+- Docs: methods.md sections 10-11, docs/handoff/phase16.md.
+
 ## 2.2.0.dev15 — Phase 15: the validation upgrade
 Goal: make it hard to fool ourselves. Every later phase's gate uses this.
 - `predict/validation.py`: combinatorial purged cross-validation for races (2018-2025,
