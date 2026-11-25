@@ -10,6 +10,7 @@ from .laptimes import (
     driver_laptimes_scatter, format_laptime, laptime_axis, laptime_distribution,
     require_race_laps,
 )
+from .bayes_plots import strength_intervals
 from .live_plots import position_heatmap, prediction_bars, track_record_plot
 from .predict_plots import calibration_plot
 from .qualifying import qualifying_overview
@@ -28,6 +29,6 @@ __all__ = [
     "delta_plot", "gear_map", "speed_map", "speed_trace", "calibration_plot",
     "car_strength_plot", "driver_skill_plot", "strength_vs_result",
     "attribution_plot", "embedding_plot", "start_weight_plot", "weights_plot",
-    "position_heatmap", "prediction_bars", "track_record_plot",
+    "position_heatmap", "prediction_bars", "track_record_plot", "strength_intervals",
     "cpcv_boxplot", "embargo_plot",
 ]

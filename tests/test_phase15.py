@@ -24,7 +24,7 @@ from pitwall.predict.ensemble import PooledModel, pool_forward, pool_name, pool_
 from pitwall.predict.experiments import (
     append_rows, config_params, count_trials, data_hash, find_experiment, losses_dir_for,
     merge_logs, model_family, params_hash, read_log, read_race_losses, trials_table,
-    write_race_losses,
+    write_race_losses, PHASE,
 )
 from pitwall.predict.metrics import race_loss_table, summarise, weighted_loss
 from pitwall.predict.models.base import check_consistency
@@ -357,7 +357,7 @@ def test_log_round_trip_and_old_rows_stay_readable(data, tmp_path):
     first = table.iloc[0]
     assert first["family"] == "M1" and first["phase"] == "<=14"
     assert first["validation"] == "walk_forward" and first["win_logloss"] == "0.1655"
-    new = table[table["phase"] == "15"]
+    new = table[table["phase"] == PHASE]
     assert len(new) == 2 and new["experiment_id"].is_unique
     assert set(new["validation"]) == {"walk_forward"} and (new["data_hash"] != "").all()
     for row in new.to_dict("records"):
@@ -483,8 +483,9 @@ def test_run_validation_logs_both_validations(validated):
     folder, log, lines = validated
     table = read_log(log)
     assert set(table["validation"]) == {"walk_forward", "cpcv"}
-    assert set(table.loc[table["validation"] == "cpcv", "embargo"]) == {"0", "1"}
-    assert (table["phase"] == "15").all() and table["experiment_id"].is_unique
+    # default embargo 10 since Phase 16 (was 1), plus the sensitivity embargo 0
+    assert set(table.loc[table["validation"] == "cpcv", "embargo"]) == {"0", "10"}
+    assert (table["phase"] == "16").all() and table["experiment_id"].is_unique
     text = (folder / "validation.md").read_text()
     for part in ("## Moment: quali", "Embargo sensitivity", "## Gate decisions",
                  "Benjamini-Hochberg", "Trials per family", "Run times"):
@@ -492,7 +493,7 @@ def test_run_validation_logs_both_validations(validated):
     assert (folder / "validation_cpcv_quali.png").exists()
     assert (folder / "validation_embargo.png").exists()
     assert any(line.startswith("CPCV quali embargo 0") for line in lines)
-    evidence = load_evidence("B1 logistic", "quali", log, embargo=1)
+    evidence = load_evidence("B1 logistic", "quali", log, embargo=10)
     assert evidence.cpcv is not None and len(evidence.experiment_ids) == 2
     with pytest.raises(LockedSeasonError):
         load_evidence("B1 logistic", "quali", log, season=2026)

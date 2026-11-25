@@ -26,7 +26,7 @@ jobs:
           cache: pip
       - name: CPU-only PyTorch (small download, no GPU libraries)
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,bayes]"   # bayes: PyMC for the Phase 16 M4 tests
       - run: ruff check .
       - run: pytest --cov=pitwall --cov-report=term-missing
 

@@ -21,6 +21,7 @@ from .._optional import require
 from ..strength import StrengthParams
 from ..strength_features import STRENGTH_FEATURES, StrengthFeatures
 from .base import (
+    RaceScores,
     standardise,
     N_SIMS, design_matrix, features_of, fit_binary, fit_scale, moment_of, predict_from_scores,
 )
@@ -78,8 +79,8 @@ class StrengthModel:
         self.dnf_ = fit_binary(dnf_model, z, rows["DNF"].to_numpy())
         return self
 
-    def predict(self, race: pd.DataFrame) -> pd.DataFrame:
-        """Probabilities for one race of the moment the model was fitted on."""
+    def race_scores(self, race: pd.DataFrame) -> RaceScores:
+        """Raw scores (higher = faster), their uncertainty, DNF chances and temperature."""
         if moment_of(race) != self.moment_:
             raise ValueError(f"{self.name} was fitted on '{self.moment_}' rows.")
         rows = self.strength_features(race)
@@ -91,8 +92,13 @@ class StrengthModel:
         else:
             scores = z @ self.weights_
             spread = self._score_sd(rows)
-        return predict_from_scores(race, scores, p_dnf, self.scale_, self.n_sims, self.seed,
-                                   spread if self.use_score_sd else None)
+        return RaceScores(scores, spread if self.use_score_sd else None, p_dnf, self.scale_)
+
+    def predict(self, race: pd.DataFrame) -> pd.DataFrame:
+        """Probabilities for one race of the moment the model was fitted on."""
+        s = self.race_scores(race)
+        return predict_from_scores(race, s.scores, s.p_dnf, s.scale, self.n_sims, self.seed,
+                                   s.spread)
 
     def strength_features(self, race: pd.DataFrame) -> pd.DataFrame:
         """The race rows plus the filter's forecast for each driver (same order)."""

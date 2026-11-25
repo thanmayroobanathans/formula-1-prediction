@@ -1,4 +1,4 @@
-# Methods: how pitwall checks that an improvement is real (Phase 15)
+# Methods: how pitwall checks that an improvement is real (Phase 15), and the Phase 16 models
 
 This page holds the maths behind `pitwall/predict/validation.py`,
 `pitwall/predict/significance.py` and `backtest.gate_v2`. The race report's methodology
@@ -34,7 +34,12 @@ finish over 5 races, DNF rates over 10, championship points so far. A training r
 that comes just *after* a test block therefore carries the test races' results inside
 its features, and a model that learns from it learns a little about the test labels.
 The **embargo** removes the $e$ race weekends after every test block from training
-(default $e = 1$; Phase 15 also runs $e = 0, 3, 10$). The **purge** removes training
+(default $e = 10$ since Phase 16; the sensitivity check also runs $e = 0, 1, 3$). Why 10:
+the longest look-back of any form feature is 10 races (DNF rates), so a race more than 10
+races after a test race no longer has that test race's result inside any of its
+features. Phase 15 measured the cost of a too-short gap: B2 (LightGBM) scored better
+with $e = 0$ than with $e = 10$ in 7 of 8 model-moments, a small but consistent sign
+that it was using the test results hidden in later races' features. The **purge** removes training
 races whose date falls inside a test block's date span; with one-race labels it is empty,
 but it is kept as a guard. `check_split` raises `LeakageError` if a training race is a
 test race, lies within the embargo after one, or is dated inside a test block.
@@ -181,6 +186,68 @@ $$\hat\beta_G = \arg\max_\beta \sum_{\text{races}}\sum_{k \in G}
 on out-of-sample scores (models fitted on 2018-2023, scored on 2024-2025). $\hat\beta = 1$
 means the model's own scale is right for those places.
 
+## 10. Stagewise Plackett-Luce (Phase 16, step 0)
+
+*In words: section 9 showed one sharpness setting cannot fit both the fight for the win
+and the midfield. Stagewise Plackett-Luce gives each group of places its own setting,
+learned from races the model did not train on.*
+
+Places are split into stages $G_1 = \{1\}$, $G_2 = \{2, 3\}$, $G_3 = \{4..10\}$,
+$G_4 = \{11+\}$. With multipliers $m_1..m_4 > 0$, place $k \in G_g$ is filled with
+probability $\exp(m_g s_{(k)}) / \sum_{j \in R_k} \exp(m_g s_j)$. With all $m_g = 1$ this
+is ordinary Plackett-Luce. The multipliers are fitted by maximum likelihood (L-BFGS-B on
+$\log m_g$, bounds 0.05-20) on **out-of-fold** scores: the base model (B1, M1 or M4) is
+refitted on 3 folds of the training races (every 3rd race in date order held out), so
+every training race is scored by a model that never saw it. Without that the in-sample
+scores are too confident and the fitted $m_1$ is biased down. Optional monotone
+constraint ($m_1 \ge m_2 \ge \dots$) via softplus increments.
+
+Sampling uses the Gumbel trick per stage: for the places of stage $g$, add Gumbel noise to
+$m_g s_i$ over the drivers still unplaced and take the top $|G_g|$. Retirements are drawn
+first and always fill the last places, as in the plain sampler.
+
+Stagewise PL is **its own family** in the trial counts (deflated score, PBO, BH), so its
+trials do not dilute or borrow from B1 or M1.
+
+## 11. M4: hierarchical Bayesian car and driver model (Phase 16)
+
+*In words: each race result is car + driver. The car's speed drifts a little from race to
+race, can jump over the winter and jumps a lot when the rules reset (2014, 2017, 2022,
+2026). A driver's skill drifts slowly from season to season. A driver nobody has seen gets
+the typical rookie's skill with wide uncertainty. Every number comes with an interval.*
+
+Pace (percent gap to the field, lower = faster) of driver $d$ in team $t$ at race $r$:
+$$\text{pace}_{d,r} = c_{t,b(r)} + a_{d,y(r)}$$
+
+- Car, random walk over blocks $b$ of 3 races (blocks never cross seasons):
+  $c_{t,b} = c_{t,b-1} + \varepsilon$, $\varepsilon \sim N(0, \sigma_c^2 + \mathbb 1_{\text{new
+  season}}\sigma_w^2 + \mathbb 1_{\text{rule reset}}\sigma_e^2)$, with
+  $\sigma_c \sim HN(0.2)$, $\sigma_w \sim HN(0.5)$, $\sigma_e \sim HN(1)$.
+- Driver skill, random walk by season: $a_{d,y} = a_{d,y-1} + N(0, \sigma_a^2)$,
+  $\sigma_a \sim HN(0.2)$. First season: veterans (already in the data before the window)
+  $N(0, \sigma_v^2)$; rookies $N(\mu_r, \sigma_r^2)$, $\mu_r \sim N(0.2, 0.3)$,
+  $\sigma_r \sim HN(0.5)$: the rookie prior is *learned* from past rookies.
+- Likelihoods: qualifying gap $\sim N(\text{pace}, \sigma_q^2)$, practice gap
+  $\sim N(\text{pace}, \sigma_p^2)$, finishing order $\sim$ Plackett-Luce with scores
+  $-\beta \cdot \text{pace}$, $\beta \sim HN(3)$ (finishers only; DNFs are a separate
+  logistic model on the usual moment features, as in B1).
+- Inference: ADVI (mean-field, Adam, 15,000 iterations; one continuation if the loss is
+  still falling; `BayesFitError` on NaN or no convergence). NUTS is available
+  (`method="nuts"`, R-hat <= 1.05 and zero divergences or it refuses).
+
+Forecasting race $r^*$: posterior draws are carried forward — car steps for the races
+since the last block ($\approx$ days / 42 steps), plus winter (and era) variance in a new
+season; an unknown team gets $N(0, \text{NEW\_CAR\_VAR})$, an unknown driver the rookie
+prior. At the practice and quali moments the race's own centred gaps are then used as
+one Gaussian observation each (conjugate update of mean and variance) — the same
+information B1 gets as features, so the comparison is fair. The prediction is
+Plackett-Luce with mean score $-\beta\,\bar{\text{pace}}$ and per-driver spread
+$\beta\,\text{sd}(\text{pace})$ (the `score_sd` path of the sampler): uncertain drivers
+(rookies, a new era) get wider finishing distributions, which a single score cannot do.
+
+`pitwall-f1 strengths 2025 --after-round 10 --plot cars.png` prints the car and driver
+tables with 80% intervals.
+
 ## References
 
 - M. López de Prado (2018), *Advances in Financial Machine Learning*, Wiley, ch. 7 and 12.
@@ -191,6 +258,10 @@ means the model's own scale is right for those places.
 - F. Diebold, R. Mariano (1995), "Comparing Predictive Accuracy", *JBES* 13(3).
 - D. Harvey, S. Leybourne, P. Newbold (1997), "Testing the equality of prediction mean
   squared errors", *International Journal of Forecasting* 13(2).
+- R. Plackett (1975), "The analysis of permutations", *Applied Statistics* 24(2);
+  R. D. Luce (1959), *Individual Choice Behavior*.
+- A. Kucukelbir et al. (2017), "Automatic Differentiation Variational Inference", *JMLR* 18.
+- A. Gelman et al. (2013), *Bayesian Data Analysis*, 3rd ed., ch. 5 (hierarchical models).
 - H. Künsch (1989), "The jackknife and the bootstrap for general stationary
   observations", *Annals of Statistics* 17(3) (block bootstrap).
 - Y. Benjamini, Y. Hochberg (1995), "Controlling the False Discovery Rate", *JRSS B* 57(1).

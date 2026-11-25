@@ -196,6 +196,19 @@ pitwall-f1 paper settle && pitwall-f1 paper report   # after the race -> reports
 - Results: profit (pretend), ROI with a bootstrap interval, closing line value,
   drawdown, risk of ruin, and how many races until the result means anything.
 
+## Phase 16: stagewise Plackett-Luce and a Bayesian car/driver model
+
+- **Stagewise Plackett-Luce.** Phase 15 found that one "sharpness" setting makes the
+  front of the race too flat (models gave the pole-sitter about 21% when pole won 67% of
+  2025 races). Now places 1, 2-3, 4-10 and 11+ each get their own setting, learned from
+  races the model did not train on.
+- **M4 Bayesian model** (`pip install -e ".[ml,bayes]"`). Result = car + driver, each
+  with an uncertainty: the car drifts race to race and jumps at a rule reset; a new
+  driver starts from what past rookies were like, with wide uncertainty. See
+  [docs/methods.md](docs/methods.md) sections 10-11.
+- Both are judged by the Phase 15 gate (`reports/validation.md`); a model that does not
+  pass stays out of the champion and is written up in `lab/`.
+
 ## Command line
 
 ```bash
@@ -208,6 +221,7 @@ pitwall-f1 token          # checks your token without printing it
 pitwall-f1 cache-clear
 pitwall-f1 next | predict | report | backtest | dataset build | score | final-2026   # see above
 pitwall-f1 validate | gate                                                           # Phase 15
+pitwall-f1 strengths 2025 --after-round 10 --plot cars.png   # Phase 16: Bayesian car/driver pace
 ```
 
 Exit codes: 0 done (or nothing to do with `--skip-if-*`), 1 error, 2 bad arguments, 3 data not available yet.
