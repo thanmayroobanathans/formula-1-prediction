@@ -287,3 +287,27 @@ def test_stagewise_is_its_own_family_and_phase_16_is_logged():
     assert model_family("B1 logistic") == "B1" and model_family("M4 Bayesian") == "M4"
     assert is_validated_phase(pd.Series(["<=14", "15", "16", ""])).tolist() == \
         [False, True, True, False]
+
+
+def test_tagged_record_sits_next_to_the_official_one(tmp_path):
+    import json
+
+    from pitwall.predict.records import load_records, record_stem, save_record, write_docs
+    assert record_stem(2026, 22, "pre", "phase16") == "2026-22-pre-phase16"
+    drivers = [{"DriverId": "ver", "Driver": "VER", "TeamId": "red-bull", "P_win": 0.3,
+                "P_podium": 0.6, "P_points": 0.9, "P_dnf": 0.05, "ExpectedPosition": 3.0}]
+    base = {"year": 2026, "round": 22, "moment": "pre", "event": "Qatar Grand Prix",
+            "created_utc": "2026-11-25T01:40:29+00:00", "git": "x", "config_hash": "y",
+            "version": "z", "race_date": "2026-11-29", "drivers": drivers}
+    save_record(dict(base), tmp_path / "rec")
+    save_record(dict(base, tag="phase16"), tmp_path / "rec")
+    records = load_records(tmp_path / "rec")
+    assert [r["_stem"] for r in records] == ["2026-22-pre-phase16", "2026-22-pre"]
+    assert records[-1].get("tag") is None            # the official record sorts last
+    index = write_docs(records, tmp_path / "docs", tmp_path / "none.md").read_text()
+    assert "| pre (phase16) |" in index and "| pre |" in index
+    page = (tmp_path / "docs" / "predictions" / "2026-22-pre-phase16.md").read_text()
+    assert page.startswith("# 2026 Qatar Grand Prix — pre (phase16)")
+    assert json.loads((tmp_path / "rec" / "2026-22-pre.json").read_text())["drivers"]
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["predict", "next", "--tag", "Bad Tag"])

@@ -59,9 +59,10 @@ class RecordMeta:
     notes: list[str]
 
 
-def record_stem(year: int, rnd: int, moment: str) -> str:
-    """'2026-23-quali'."""
-    return f"{year}-{rnd:02d}-{moment}"
+def record_stem(year: int, rnd: int, moment: str, tag: str = "") -> str:
+    """'2026-23-quali', or '2026-23-quali-phase16' for an extra, labelled prediction
+    (e.g. a new model added after the moment's official record was made)."""
+    return f"{year}-{rnd:02d}-{moment}" + (f"-{tag}" if tag else "")
 
 
 def config_hash(config: dict[str, Any]) -> str:
@@ -107,7 +108,8 @@ def save_record(record: dict[str, Any], directory: Path | str = RECORDS_DIR) -> 
     """Write a record; refuses (RecordExistsError) if one exists for that race and moment."""
     folder = Path(directory)
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{record_stem(record['year'], record['round'], record['moment'])}.json"
+    path = folder / (record_stem(record["year"], record["round"], record["moment"],
+                                 record.get("tag", "")) + ".json")
     try:
         with path.open("x", encoding="utf-8") as handle:  # 'x' = fail if it exists
             json.dump(record, handle, indent=1)
@@ -384,8 +386,9 @@ def write_docs(records: list[dict[str, Any]], docs: Path | str = DOCS_DIR,
         best = max(record["drivers"], key=lambda d: d["P_win"]) if record["drivers"] else top
         pdf = folder / "reports" / f"{stem}.pdf"
         link = f"[PDF](reports/{stem}.pdf)" if pdf.exists() else ""
+        moment = record["moment"] + (f" ({record['tag']})" if record.get("tag") else "")
         lines.append(f"| [{record['year']} {record['event']}](predictions/{stem}.md) | "
-                     f"{record['moment']} | {record['created_utc'][:16]} | "
+                     f"{moment} | {record['created_utc'][:16]} | "
                      f"{best.get('Driver', '?')} | {best.get('P_win', 0):.1%} | {link} |")
         _prediction_page(record, stem, folder)
     if not records:
@@ -402,7 +405,8 @@ def write_docs(records: list[dict[str, Any]], docs: Path | str = DOCS_DIR,
 
 
 def _prediction_page(record: dict[str, Any], stem: str, folder: Path) -> None:
-    lines = [f"# {record['year']} {record['event']} — {record['moment']}", "",
+    tag = f" ({record['tag']})" if record.get("tag") else ""
+    lines = [f"# {record['year']} {record['event']} — {record['moment']}{tag}", "",
              f"Made {record['created_utc']} (git {record['git']}, config "
              f"{record['config_hash']}, pitwall-f1 {record['version']}). "
              f"Race date {record['race_date']}.", ""]

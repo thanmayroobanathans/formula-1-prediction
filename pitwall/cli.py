@@ -77,6 +77,9 @@ def build_parser() -> argparse.ArgumentParser:
     predict.add_argument("--skip-if-exists", action="store_true",
                          help="exit 0 when this prediction was already made")
     predict.add_argument("--fast", action="store_true", help="M2 with 2 seeds (if configured)")
+    predict.add_argument("--tag", default="", type=_tag,
+                         help="save an EXTRA labelled record (e.g. phase16) next to the "
+                              "moment's official one; nothing is overwritten")
     _within(predict)
     _source_flags(predict)
 
@@ -324,6 +327,14 @@ def _next(args: argparse.Namespace) -> tuple[str, int]:
     return "\n".join(lines), EXIT_OK
 
 
+def _tag(text: str) -> str:
+    """Record tags become file names: lower-case letters, digits and '-' only."""
+    if text and not all(c.isalnum() and (c.isdigit() or c.islower()) or c == "-"
+                        for c in text):
+        raise argparse.ArgumentTypeError("tag: lower-case letters, digits and '-' only")
+    return text
+
+
 def _predict(args: argparse.Namespace) -> tuple[str, int]:
     from .predict.records import RecordExistsError
     from .predict.service import (
@@ -337,7 +348,7 @@ def _predict(args: argparse.Namespace) -> tuple[str, int]:
         return far, EXIT_OK
     try:
         out = predict_race(year, event, args.moment, sources, save=not args.no_record,
-                           now=utcnow, n_seeds=2 if args.fast else None)
+                           now=utcnow, n_seeds=2 if args.fast else None, tag=args.tag)
     except RecordExistsError as exc:
         if args.skip_if_exists:
             return f"Nothing to do: {exc}", EXIT_OK

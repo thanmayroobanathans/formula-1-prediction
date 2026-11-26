@@ -20,6 +20,9 @@ on:
         type: choice
         options: [pre, practice, quali]
         default: pre
+      tag:
+        description: "Optional: save an EXTRA labelled prediction (e.g. phase16) next to the official one"
+        default: ""
 
 permissions:
   contents: read
@@ -68,10 +71,12 @@ jobs:
           MOMENT: ${{ steps.what.outputs.moment }}
           YEAR: ${{ steps.what.outputs.year }}
           EVENT: ${{ steps.what.outputs.event }}
+          TAG: ${{ inputs.tag }}
         run: |
           pitwall-f1 predict "$YEAR" "$EVENT" --moment "$MOMENT" --within-days 4 \
-            --skip-if-unavailable --skip-if-exists
+            --skip-if-unavailable --skip-if-exists ${TAG:+--tag "$TAG"}
       - name: Paper trade (pretend stakes; skips if no market prices were typed in)
+        if: ${{ !inputs.tag }}
         env:
           MOMENT: ${{ steps.what.outputs.moment }}
           YEAR: ${{ steps.what.outputs.year }}

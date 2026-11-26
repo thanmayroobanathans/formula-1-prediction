@@ -2,7 +2,7 @@
   "moments": {
     "pre": {
       "models": [
-        "B1 logistic"
+        "M1 stagewise"
       ],
       "method": "single",
       "calibrate": false,
@@ -10,7 +10,7 @@
     },
     "practice": {
       "models": [
-        "B1 logistic"
+        "M1 stagewise"
       ],
       "method": "single",
       "calibrate": false,
@@ -26,8 +26,14 @@
     }
   },
   "n_seeds": 10,
-  "note": "best single model per moment, backtest (2024, 2025)",
+  "note": "Phase 16: pre and practice switched to M1 stagewise (passes gate_v2 against B1 logistic, reports/phase16_decision.md); quali stays B0 grid slot.",
   "extra": {},
   "created": "2026-11-25T02:12:17+00:00",
-  "git": "04e03e2"
+  "git": "04e03e2",
+  "previous": {
+    "pre": "B1 logistic",
+    "practice": "B1 logistic",
+    "note": "best single model per moment, backtest (2024, 2025)",
+    "git": "04e03e2"
+  }
 }
