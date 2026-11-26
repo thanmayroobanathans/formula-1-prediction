@@ -88,8 +88,8 @@ def predict_race(year: int, event: str, moment: str, sources: Sources,
                  history_predictions: pd.DataFrame | None = None,
                  records_dir: Path | str = RECORDS_DIR, save: bool = True,
                  first_year: int = 2018, now: Callable[[], dt.datetime] | None = None,
-                 n_seeds: int | None = None, live_rows: LiveRows | None = None
-                 ) -> PredictionOutput:
+                 n_seeds: int | None = None, live_rows: LiveRows | None = None,
+                 tag: str = "") -> PredictionOutput:
     """Build the live rows, run the pipeline and B0, and (optionally) save the record.
 
     The record is checked for existence FIRST, so a rerun costs nothing and never
@@ -98,7 +98,7 @@ def predict_race(year: int, event: str, moment: str, sources: Sources,
     clock = now or _utcnow
     schedule = sources.jolpica.get_schedule(year)
     race = find_event(schedule, event)
-    stem = record_stem(year, int(race["Round"]), moment)
+    stem = record_stem(year, int(race["Round"]), moment, tag)
     target = Path(records_dir) / f"{stem}.json"
     if save and target.exists():
         from .records import RecordExistsError
@@ -122,6 +122,11 @@ def predict_race(year: int, event: str, moment: str, sources: Sources,
                       live.flags, live.warnings, live.notes)
     record = make_record(prediction, meta, baseline, teams, now=clock())
     record["context"] = race_context(live)
+    if tag:
+        record["tag"] = tag
+        record["notes"] = [*record.get("notes", []),
+                           f"Extra prediction '{tag}' with the pipeline above, made after this "
+                           "moment's first record; both are kept and graded."]
     path = save_record(record, records_dir) if save else None
     return PredictionOutput(prediction, baseline, live, record, path, teams)
 
@@ -194,7 +199,8 @@ def save_prediction_plots(output: PredictionOutput, docs_dir: Path | str = DOCS_
 
     folder = Path(docs_dir) / "img"
     folder.mkdir(parents=True, exist_ok=True)
-    stem = record_stem(output.live.year, output.live.round, output.live.moment)
+    stem = record_stem(output.live.year, output.live.round, output.live.moment,
+                       output.record.get("tag", ""))
     title = f"{output.live.year} {output.live.event} ({output.live.moment})"
     paths = []
     with plt.style.context("default"):

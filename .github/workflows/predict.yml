@@ -20,10 +20,9 @@ on:
         type: choice
         options: [pre, practice, quali]
         default: pre
-      preview:
-        description: "Preview only: predict with the current config, print it, save nothing"
-        type: boolean
-        default: false
+      tag:
+        description: "Optional: save an EXTRA labelled prediction (e.g. phase16) next to the official one"
+        default: ""
 
 permissions:
   contents: read
@@ -67,26 +66,17 @@ jobs:
             "0 22 * * 6") echo "moment=quali" >> "$GITHUB_OUTPUT"; echo "year=next" >> "$GITHUB_OUTPUT"; echo "event=next" >> "$GITHUB_OUTPUT" ;;
             *) echo "moment=$IN_MOMENT" >> "$GITHUB_OUTPUT"; echo "year=$IN_YEAR" >> "$GITHUB_OUTPUT"; echo "event=$IN_EVENT" >> "$GITHUB_OUTPUT" ;;
           esac
-      - name: Preview (no record, no commit; the saved record is never replaced)
-        if: ${{ inputs.preview }}
-        env:
-          MOMENT: ${{ steps.what.outputs.moment }}
-          YEAR: ${{ steps.what.outputs.year }}
-          EVENT: ${{ steps.what.outputs.event }}
-        run: |
-          pitwall-f1 predict "$YEAR" "$EVENT" --moment "$MOMENT" --within-days 4 \
-            --no-record --json preview.json
       - name: Predict (exits 0 if the data is not out yet or it was already done)
-        if: ${{ !inputs.preview }}
         env:
           MOMENT: ${{ steps.what.outputs.moment }}
           YEAR: ${{ steps.what.outputs.year }}
           EVENT: ${{ steps.what.outputs.event }}
+          TAG: ${{ inputs.tag }}
         run: |
           pitwall-f1 predict "$YEAR" "$EVENT" --moment "$MOMENT" --within-days 4 \
-            --skip-if-unavailable --skip-if-exists
+            --skip-if-unavailable --skip-if-exists ${TAG:+--tag "$TAG"}
       - name: Paper trade (pretend stakes; skips if no market prices were typed in)
-        if: ${{ !inputs.preview }}
+        if: ${{ !inputs.tag }}
         env:
           MOMENT: ${{ steps.what.outputs.moment }}
           YEAR: ${{ steps.what.outputs.year }}
@@ -95,7 +85,6 @@ jobs:
           pitwall-f1 paper trade "$YEAR" "$EVENT" --moment "$MOMENT" --within-days 4 \
             --skip-if-unavailable --skip-if-exists || echo "Paper trading skipped."
       - name: Commit the record, reports and site
-        if: ${{ !inputs.preview }}
         env:
           MOMENT: ${{ steps.what.outputs.moment }}
         run: |
